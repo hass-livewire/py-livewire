@@ -1,0 +1,72 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "py-livewire"
+dynamic = ["version"]
+description = "Async Python client for the LiveWire electric motorcycle cloud API"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Igor Novgorodov", email = "igor@novg.net" }]
+requires-python = ">=3.11"
+dependencies = ["aiohttp>=3.10"]
+keywords = [
+    "livewire",
+    "harley-davidson",
+    "motorcycle",
+    "electric",
+    "ev",
+    "api",
+    "cloud",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: AsyncIO",
+    "Intended Audience :: Developers",
+    "Natural Language :: English",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+dev = ["py-livewire[test]", "ruff>=0.6", "mypy>=1.10", "build"]
+
+[project.scripts]
+livewire = "py_livewire.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/hass-livewire/py-livewire"
+Issues = "https://github.com/hass-livewire/py-livewire/issues"
+
+[tool.setuptools]
+packages = ["py_livewire"]
+
+[tool.setuptools.dynamic]
+version = { attr = "py_livewire.__version__" }
+
+[tool.setuptools.package-data]
+py_livewire = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "ASYNC", "RUF"]
+# Timeouts are passed to aiohttp or bound polling loops
+ignore = ["ASYNC109"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["py_livewire"]
