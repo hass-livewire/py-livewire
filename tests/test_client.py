@@ -39,6 +39,9 @@ class Backend:
         self.handlers: dict[tuple[str, str], Handler] = {}
         self.next_token = make_jwt("user-1", 1)
         self.valid_token = self.next_token
+        self.gigya_logins = 0
+        self.gigya_error: dict | None = None
+        self.session_error: dict | None = None
 
     def route(self, method: str, path: str, data=None, status: int = 200) -> None:
         async def handler(request: web.Request) -> web.StreamResponse:
@@ -56,8 +59,11 @@ class Backend:
         return app
 
     async def gigya(self, request: web.Request) -> web.Response:
+        self.gigya_logins += 1
         form = await request.post()
         assert form["apiKey"] == "4_6aX8cf8RFVt6F3JQQZaF3A"
+        if self.gigya_error is not None:
+            return web.json_response(self.gigya_error)
         if form["password"] != "secret":
             return web.json_response(
                 {"errorCode": 403042, "errorMessage": "Invalid LoginID"}
@@ -66,6 +72,8 @@ class Backend:
 
     async def session(self, request: web.Request) -> web.Response:
         self.sessions.append(await request.json())
+        if self.session_error is not None:
+            return web.json_response(self.session_error, status=500)
         self.valid_token = self.next_token
         return web.json_response({"jwt": self.valid_token, "termsAccepted": True})
 
@@ -181,14 +189,44 @@ def test_relogin_on_401():
 
     async def test(client: Client):
         await client.login()
-        # the backend expires the token, the next login yields a new one
+        # the backend expires the token, the next request yields a new one
         backend.valid_token = None
         backend.next_token = make_jwt("user-1", 2)
 
         assert len(await client.get_bikes()) == 1
 
     run(test, backend)
+    # The expired token is renewed from a new session token, reusing the cached UID:
+    # a second session request, but no second Gigya password login.
     assert len(backend.sessions) == 2
+    assert backend.gigya_logins == 1
+
+
+def test_transient_gigya_error_is_retryable():
+    backend = Backend()
+    backend.gigya_error = {"errorCode": 500001, "errorMessage": "General Server Error"}
+
+    async def test(client: Client):
+        with pytest.raises(ApiError) as err:
+            await client.login()
+        assert not isinstance(err.value, AuthenticationError)
+        assert err.value.code == "500001"
+
+    run(test, backend)
+
+
+def test_session_failure_is_retryable():
+    # The session endpoint does not use the password, so its failure must not look like
+    # an authentication failure (which would trigger a pointless reauth).
+    backend = Backend()
+    backend.session_error = {"error": {"description": "backend down"}}
+
+    async def test(client: Client):
+        with pytest.raises(ApiError) as err:
+            await client.login()
+        assert not isinstance(err.value, AuthenticationError)
+
+    run(test, backend)
 
 
 def test_pair():

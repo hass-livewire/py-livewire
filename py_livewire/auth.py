@@ -6,7 +6,7 @@ from typing import Any
 import aiohttp
 
 from . import const
-from .exceptions import AuthenticationError
+from .exceptions import ApiError, AuthenticationError
 
 
 def jwt_subject(token: str) -> str | None:
@@ -25,7 +25,10 @@ class Authenticator:
     """Logs in to Gigya and exchanges the account UID for a LiveWire session token.
 
     The token carries no usable expiry and there is no refresh flow, so it is used until
-    the backend rejects it, which triggers a full login again.
+    the backend rejects it. The account UID is cached after the first login, so renewing
+    a rejected token only re-requests a session token and the Gigya password login runs
+    just once. This avoids hammering Gigya when the token expires: the password is only
+    needed to obtain the UID, not to mint the token.
     """
 
     def __init__(
@@ -46,6 +49,7 @@ class Authenticator:
         self._api_url = api_url
 
         self._token: str | None = None
+        self._uid: str | None = None
         self._lock = asyncio.Lock()
         self.terms_accepted: bool | None = None
 
@@ -67,8 +71,11 @@ class Authenticator:
             return self._token
 
     async def _login(self, session: aiohttp.ClientSession) -> str:
-        uid = await self._gigya_uid(session)
-        return await self._session_token(session, uid)
+        # The UID is stable, so the Gigya password login only runs to obtain it the
+        # first time; renewing an expired token re-requests a session token with it.
+        if self._uid is None:
+            self._uid = await self._gigya_uid(session)
+        return await self._session_token(session, self._uid)
 
     async def _gigya_uid(self, session: aiohttp.ClientSession) -> str:
         # Gigya expects a form and reports errors in a body with HTTP 200
@@ -84,13 +91,16 @@ class Authenticator:
         ) as resp:
             res: dict[str, Any] = await resp.json(content_type=None)
 
-        if res.get("errorCode", 0) != 0:
-            raise AuthenticationError(
-                f"Gigya login failed: {res.get('errorMessage')} "
-                f"({res.get('errorCode')})"
-            )
+        error_code = res.get("errorCode", 0)
+        if error_code != 0:
+            message = f"Gigya login failed: {res.get('errorMessage')} ({error_code})"
+            if error_code in const.GIGYA_CREDENTIAL_ERRORS:
+                raise AuthenticationError(message)
+            # A transient Gigya problem (rate limit, captcha, server error): retryable,
+            # re-entering the credentials would not help.
+            raise ApiError(message, code=str(error_code))
         if not res.get("UID"):
-            raise AuthenticationError("Gigya login returned no UID")
+            raise ApiError("Gigya login returned no UID")
 
         return str(res["UID"])
 
@@ -112,7 +122,9 @@ class Authenticator:
             res = {}
         if not res.get("jwt"):
             detail = (res.get("error") or {}).get("description") or f"HTTP {status}"
-            raise AuthenticationError(f"session request failed: {detail}")
+            # The session endpoint does not use the password, so a failure here is a
+            # backend or transient problem, not a credential one: retryable, not reauth.
+            raise ApiError(f"session request failed: {detail}", status=status)
 
         self.terms_accepted = res.get("termsAccepted")
         return str(res["jwt"])

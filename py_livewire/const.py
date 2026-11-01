@@ -19,6 +19,18 @@ LANGUAGE = "en-US"
 
 KM_PER_MILE = 1.609344
 
+# Gigya accounts.login errorCodes that mean the credentials are the problem, so
+# that re-entering them could help: a wrong loginID or password, or an account the
+# user still has to finish setting up. Any other Gigya error (rate limit, captcha,
+# server error) is transient and should be retried, not reported as a login failure.
+GIGYA_CREDENTIAL_ERRORS = frozenset(
+    {
+        403042,  # invalid loginID or password
+        206001,  # account pending registration
+        206002,  # account pending verification
+    }
+)
+
 # Values of error.code in the response envelope
 CODE_OK = "0"
 CODE_PARTIAL = "-300"  # the app still shows the charging data that comes with it
